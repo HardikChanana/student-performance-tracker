@@ -6,4 +6,4 @@
       shell: docker rm -f student-app || true
 
     - name: Run Spring Boot container
-      shell: docker run -d -p 8081:8081 --name student-app student-tracker-backend
+      shell: docker run -d -p 8081:8081 --name student-app student-performance-tracker
