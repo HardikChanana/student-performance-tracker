@@ -2,9 +2,7 @@ package com.example.studenttracker;
 
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
-@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/students")
 public class StudentController {
@@ -18,6 +16,7 @@ public class StudentController {
 
     @PostMapping
     public Student addStudent(@RequestBody Student student) {
+        // Auto-calculate grade
         if (student.getMarks() >= 90) {
             student.setGrade("A");
         } else if (student.getMarks() >= 75) {
@@ -28,8 +27,19 @@ public class StudentController {
             student.setGrade("D");
         }
 
+        // Auto-assign pass/fail status
         student.setStatus(student.getMarks() >= 40 ? "Pass" : "Fail");
+
         studentList.add(student);
+
+        // Send metrics to Graphite
+        sendMetricToGraphite("marks." + formatKey(student.getName()), student.getMarks());
+        sendMetricToGraphite("attendance." + formatKey(student.getName()), student.getAttendance());
+
+        // Optional: send class average
+        int avgMarks = studentList.stream().mapToInt(Student::getMarks).sum() / studentList.size();
+        sendMetricToGraphite("class.avg_marks", avgMarks);
+
         return student;
     }
 
@@ -41,63 +51,25 @@ public class StudentController {
 
     @GetMapping("/")
     public String home() {
-        return "Student Tracker Application is running!";
+        return "📚 Student Tracker Application is running!";
     }
 
-    @GetMapping("/analytics/class/{course}")
-    public Map<String, Object> getClassAnalytics(@PathVariable String course) {
-        List<Student> classStudents = studentList.stream()
-                .filter(s -> course.equalsIgnoreCase(s.getCourse()))
-                .toList();
-
-        if (classStudents.isEmpty()) {
-            return Map.of("error", "No students found in class: " + course);
+    // Utility: Send metrics to Graphite
+    private void sendMetricToGraphite(String metricName, int value) {
+        try (Socket socket = new Socket("localhost", 2003);
+             PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)) {
+            long timestamp = System.currentTimeMillis() / 1000;
+            String fullMetric = String.format("studenttracker.%s %d %d%n", metricName, value, timestamp);
+            writer.print(fullMetric);
+            writer.flush();
+            System.out.println("✅ Sent metric to Graphite: " + fullMetric);
+        } catch (Exception e) {
+            System.err.println("❌ Failed to send metric to Graphite: " + e.getMessage());
         }
-
-        double average = classStudents.stream().mapToInt(Student::getMarks).average().orElse(0.0);
-        long passCount = classStudents.stream().filter(s -> "Pass".equalsIgnoreCase(s.getStatus())).count();
-        long failCount = classStudents.size() - passCount;
-        Student topper = classStudents.stream().max(Comparator.comparingInt(Student::getMarks)).orElse(null);
-
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("class", course);
-        stats.put("totalStudents", classStudents.size());
-        stats.put("averageMarks", average);
-        stats.put("passCount", passCount);
-        stats.put("failCount", failCount);
-        stats.put("topper", topper);
-        return stats;
     }
 
-    @GetMapping("/analytics/student/{id}/class")
-    public Map<String, Object> getStudentClassAnalytics(@PathVariable int id) {
-        Optional<Student> optStudent = studentList.stream().filter(s -> s.getId() == id).findFirst();
-        if (optStudent.isEmpty()) return Map.of("error", "Student not found");
-
-        Student student = optStudent.get();
-        String course = student.getCourse();
-
-        List<Student> classStudents = studentList.stream()
-                .filter(s -> course.equalsIgnoreCase(s.getCourse()))
-                .sorted(Comparator.comparingInt(Student::getMarks).reversed())
-                .toList();
-
-        int rank = 1;
-        for (Student s : classStudents) {
-            if (s.getId() == id) break;
-            rank++;
-        }
-
-        double classAverage = classStudents.stream().mapToInt(Student::getMarks).average().orElse(0.0);
-
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("studentId", student.getId());
-        stats.put("studentName", student.getName());
-        stats.put("course", course);
-        stats.put("marks", student.getMarks());
-        stats.put("classAverage", classAverage);
-        stats.put("rankInClass", rank);
-        stats.put("totalStudentsInClass", classStudents.size());
-        return stats;
+    // Utility: Format name into a valid Graphite key (e.g., replace spaces)
+    private String formatKey(String input) {
+        return input.trim().replaceAll("\\s+", "_").toLowerCase();
     }
 }

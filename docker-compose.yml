@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  graphite:
+    image: graphiteapp/graphite-statsd
+    ports:
+      - "8082:80"        # Graphite Web UI
+      - "2003:2003"      # Carbon (TCP)
+      - "8125:8125/udp"  # StatsD
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"      # Grafana web UI
